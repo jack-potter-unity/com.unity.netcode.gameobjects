@@ -5,15 +5,17 @@ using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
 using Unity.Multiplayer.Tools.MetricTypes;
-using Unity.Netcode.RuntimeTests.Metrics.Utlity;
+using Unity.Netcode.RuntimeTests.Metrics.Utility;
 using UnityEngine;
 using UnityEngine.TestTools;
 
 namespace Unity.Netcode.RuntimeTests.Metrics
 {
-    public class NetworkObjectMetricsTests : SingleClientMetricTestBase
+    internal class NetworkObjectMetricsTests : SingleClientMetricTestBase
     {
-        private const string k_NewNetworkObjectName = "TestNetworkObjectToSpawn";
+        // Keep less than 23 chars to avoid issues if compared against a 32-byte fixed string
+        //     since it will have "(Clone)" appended
+        private const string k_NewNetworkObjectName = "TestObjectToSpawn";
         private NetworkObject m_NewNetworkPrefab;
 
         protected override Action<GameObject> UpdatePlayerPrefab => _ =>
@@ -53,7 +55,7 @@ namespace Unity.Netcode.RuntimeTests.Metrics
             var objectSpawnedSentMetricValues = waitForMetricEvent.AssertMetricValuesHaveBeenFound();
             Assert.AreEqual(1, objectSpawnedSentMetricValues.Count);
 
-            var objectSpawned = objectSpawnedSentMetricValues.First();
+            var objectSpawned = objectSpawnedSentMetricValues.Last();
             Assert.AreEqual(Client.LocalClientId, objectSpawned.Connection.Id);
             Assert.AreEqual($"{k_NewNetworkObjectName}(Clone)", objectSpawned.NetworkId.Name);
             Assert.AreNotEqual(0, objectSpawned.BytesCount);
@@ -92,7 +94,7 @@ namespace Unity.Netcode.RuntimeTests.Metrics
             yield return waitForMetricEvent.WaitForMetricsReceived();
 
             var objectDestroyedSentMetricValues = waitForMetricEvent.AssertMetricValuesHaveBeenFound();
-            Assert.AreEqual(2, objectDestroyedSentMetricValues.Count); // As there's a client and server, this event is emitted twice.
+            Assert.AreEqual(1, objectDestroyedSentMetricValues.Count);
 
             var objectDestroyed = objectDestroyedSentMetricValues.Last();
             Assert.AreEqual(Client.LocalClientId, objectDestroyed.Connection.Id);

@@ -111,14 +111,14 @@ namespace Unity.Netcode.RuntimeTests
                 Assert.AreEqual(0, clientInstance.OnNetworkDespawnCalledCount);
             }
 
-            // despawn on server
-            serverInstance.GetComponent<NetworkObject>().Despawn();
+            // despawn on server.  However, since we'll be using this object later in the test, don't delete it (false)
+            serverInstance.GetComponent<NetworkObject>().Despawn(false);
 
             // check despawned on server
             Assert.AreEqual(1, serverInstance.OnNetworkDespawnCalledCount);
 
             // wait long enough for player object to be despawned
-            int nextFrameNumber = Time.frameCount + 2;
+            int nextFrameNumber = Time.frameCount + 4;
             yield return new WaitUntil(() => Time.frameCount >= nextFrameNumber);
 
             // check despawned on clients
@@ -135,8 +135,7 @@ namespace Unity.Netcode.RuntimeTests
             nextFrameNumber = Time.frameCount + 2;
             yield return new WaitUntil(() => Time.frameCount >= nextFrameNumber);
 
-
-            // check spawned again on server this is 2 becaue we are reusing the object which was already spawned once.
+            // check spawned again on server this is 2 because we are reusing the object which was already spawned once.
             Assert.AreEqual(2, serverInstance.OnNetworkSpawnCalledCount);
 
             // check spawned on client

@@ -4,13 +4,13 @@ using System.Collections;
 using System.Linq;
 using NUnit.Framework;
 using Unity.Multiplayer.Tools.MetricTypes;
-using Unity.Netcode.RuntimeTests.Metrics.Utlity;
+using Unity.Netcode.RuntimeTests.Metrics.Utility;
 using UnityEngine;
 using UnityEngine.TestTools;
 
 namespace Unity.Netcode.RuntimeTests.Metrics
 {
-    public class NetworkVariableMetricsTests : SingleClientMetricTestBase
+    internal class NetworkVariableMetricsTests : SingleClientMetricTestBase
     {
         protected override Action<GameObject> UpdatePlayerPrefab => prefab => prefab.AddComponent<NetworkVariableComponent>();
 

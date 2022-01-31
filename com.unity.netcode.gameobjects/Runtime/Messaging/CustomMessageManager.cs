@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 
 namespace Unity.Netcode
 {
@@ -21,18 +20,37 @@ namespace Unity.Netcode
         /// Delegate used for incoming unnamed messages
         /// </summary>
         /// <param name="clientId">The clientId that sent the message</param>
-        /// <param name="stream">The stream containing the message data</param>
-        public delegate void UnnamedMessageDelegate(ulong clientId, Stream stream);
+        /// <param name="reader">The stream containing the message data</param>
+        public delegate void UnnamedMessageDelegate(ulong clientId, FastBufferReader reader);
 
         /// <summary>
         /// Event invoked when unnamed messages arrive
         /// </summary>
         public event UnnamedMessageDelegate OnUnnamedMessage;
 
-        internal void InvokeUnnamedMessage(ulong clientId, Stream stream)
+        internal void InvokeUnnamedMessage(ulong clientId, FastBufferReader reader, int serializedHeaderSize)
         {
-            OnUnnamedMessage?.Invoke(clientId, stream);
-            m_NetworkManager.NetworkMetrics.TrackUnnamedMessageReceived(clientId, stream.SafeGetLengthOrDefault());
+            if (OnUnnamedMessage != null)
+            {
+                var pos = reader.Position;
+                var delegates = OnUnnamedMessage.GetInvocationList();
+                foreach (var handler in delegates)
+                {
+                    reader.Seek(pos);
+                    ((UnnamedMessageDelegate)handler).Invoke(clientId, reader);
+                }
+            }
+            m_NetworkManager.NetworkMetrics.TrackUnnamedMessageReceived(clientId, reader.Length + serializedHeaderSize);
+        }
+
+        /// <summary>
+        /// Sends unnamed message to all clients
+        /// </summary>
+        /// <param name="messageBuffer">The message stream containing the data</param>
+        /// <param name="networkDelivery">The delivery type (QoS) to send data with</param>
+        public void SendUnnamedMessageToAll(FastBufferWriter messageBuffer, NetworkDelivery networkDelivery = NetworkDelivery.ReliableSequenced)
+        {
+            SendUnnamedMessage(m_NetworkManager.ConnectedClientsIds, messageBuffer, networkDelivery);
         }
 
         /// <summary>
@@ -41,22 +59,29 @@ namespace Unity.Netcode
         /// <param name="clientIds">The clients to send to, sends to everyone if null</param>
         /// <param name="messageBuffer">The message stream containing the data</param>
         /// <param name="networkDelivery">The delivery type (QoS) to send data with</param>
-        public void SendUnnamedMessage(List<ulong> clientIds, NetworkBuffer messageBuffer, NetworkDelivery networkDelivery = NetworkDelivery.ReliableSequenced)
+        public void SendUnnamedMessage(IReadOnlyList<ulong> clientIds, FastBufferWriter messageBuffer, NetworkDelivery networkDelivery = NetworkDelivery.ReliableSequenced)
         {
             if (!m_NetworkManager.IsServer)
             {
                 throw new InvalidOperationException("Can not send unnamed messages to multiple users as a client");
             }
 
-            var context = m_NetworkManager.MessageQueueContainer.EnterInternalCommandContext(MessageQueueContainer.MessageType.UnnamedMessage, networkDelivery, clientIds.ToArray(), NetworkUpdateLoop.UpdateStage);
-            if (context != null)
+            if (clientIds == null)
             {
-                using var nonNullContext = (InternalCommandContext)context;
-                messageBuffer.Position = 0;
-                messageBuffer.CopyTo(nonNullContext.NetworkWriter.GetStream());
+                throw new ArgumentNullException("You must pass in a valid clientId List");
             }
 
-            m_NetworkManager.NetworkMetrics.TrackUnnamedMessageSent(clientIds, messageBuffer.Length);
+            var message = new UnnamedMessage
+            {
+                SendData = messageBuffer
+            };
+            var size = m_NetworkManager.SendMessage(ref message, networkDelivery, clientIds);
+
+            // Size is zero if we were only sending the message to ourself in which case it isn't sent.
+            if (size != 0)
+            {
+                m_NetworkManager.NetworkMetrics.TrackUnnamedMessageSent(clientIds, size);
+            }
         }
 
         /// <summary>
@@ -65,22 +90,24 @@ namespace Unity.Netcode
         /// <param name="clientId">The client to send the message to</param>
         /// <param name="messageBuffer">The message stream containing the data</param>
         /// <param name="networkDelivery">The delivery type (QoS) to send data with</param>
-        public void SendUnnamedMessage(ulong clientId, NetworkBuffer messageBuffer, NetworkDelivery networkDelivery = NetworkDelivery.ReliableSequenced)
+        public void SendUnnamedMessage(ulong clientId, FastBufferWriter messageBuffer, NetworkDelivery networkDelivery = NetworkDelivery.ReliableSequenced)
         {
-            var context = m_NetworkManager.MessageQueueContainer.EnterInternalCommandContext(MessageQueueContainer.MessageType.UnnamedMessage, networkDelivery, new[] { clientId }, NetworkUpdateLoop.UpdateStage);
-            if (context != null)
+            var message = new UnnamedMessage
             {
-                using var nonNullContext = (InternalCommandContext)context;
-                m_NetworkManager.NetworkMetrics.TrackUnnamedMessageSent(clientId, messageBuffer.Position);
-                messageBuffer.Position = 0;
-                messageBuffer.CopyTo(nonNullContext.NetworkWriter.GetStream());
+                SendData = messageBuffer
+            };
+            var size = m_NetworkManager.SendMessage(ref message, networkDelivery, clientId);
+            // Size is zero if we were only sending the message to ourself in which case it isn't sent.
+            if (size != 0)
+            {
+                m_NetworkManager.NetworkMetrics.TrackUnnamedMessageSent(clientId, size);
             }
         }
 
         /// <summary>
         /// Delegate used to handle named messages
         /// </summary>
-        public delegate void HandleNamedMessageDelegate(ulong senderClientId, Stream messagePayload);
+        public delegate void HandleNamedMessageDelegate(ulong senderClientId, FastBufferReader messagePayload);
 
         private Dictionary<ulong, HandleNamedMessageDelegate> m_NamedMessageHandlers32 = new Dictionary<ulong, HandleNamedMessageDelegate>();
         private Dictionary<ulong, HandleNamedMessageDelegate> m_NamedMessageHandlers64 = new Dictionary<ulong, HandleNamedMessageDelegate>();
@@ -88,22 +115,22 @@ namespace Unity.Netcode
         private Dictionary<ulong, string> m_MessageHandlerNameLookup32 = new Dictionary<ulong, string>();
         private Dictionary<ulong, string> m_MessageHandlerNameLookup64 = new Dictionary<ulong, string>();
 
-        internal void InvokeNamedMessage(ulong hash, ulong sender, Stream stream)
+        internal void InvokeNamedMessage(ulong hash, ulong sender, FastBufferReader reader, int serializedHeaderSize)
         {
-            var bytesCount = stream.SafeGetLengthOrDefault();
+            var bytesCount = reader.Length + serializedHeaderSize;
 
             if (m_NetworkManager == null)
             {
                 // We dont know what size to use. Try every (more collision prone)
                 if (m_NamedMessageHandlers32.TryGetValue(hash, out HandleNamedMessageDelegate messageHandler32))
                 {
-                    messageHandler32(sender, stream);
+                    messageHandler32(sender, reader);
                     m_NetworkManager.NetworkMetrics.TrackNamedMessageReceived(sender, m_MessageHandlerNameLookup32[hash], bytesCount);
                 }
 
                 if (m_NamedMessageHandlers64.TryGetValue(hash, out HandleNamedMessageDelegate messageHandler64))
                 {
-                    messageHandler64(sender, stream);
+                    messageHandler64(sender, reader);
                     m_NetworkManager.NetworkMetrics.TrackNamedMessageReceived(sender, m_MessageHandlerNameLookup64[hash], bytesCount);
                 }
             }
@@ -115,14 +142,14 @@ namespace Unity.Netcode
                     case HashSize.VarIntFourBytes:
                         if (m_NamedMessageHandlers32.TryGetValue(hash, out HandleNamedMessageDelegate messageHandler32))
                         {
-                            messageHandler32(sender, stream);
+                            messageHandler32(sender, reader);
                             m_NetworkManager.NetworkMetrics.TrackNamedMessageReceived(sender, m_MessageHandlerNameLookup32[hash], bytesCount);
                         }
                         break;
                     case HashSize.VarIntEightBytes:
                         if (m_NamedMessageHandlers64.TryGetValue(hash, out HandleNamedMessageDelegate messageHandler64))
                         {
-                            messageHandler64(sender, stream);
+                            messageHandler64(sender, reader);
                             m_NetworkManager.NetworkMetrics.TrackNamedMessageReceived(sender, m_MessageHandlerNameLookup64[hash], bytesCount);
                         }
                         break;
@@ -164,13 +191,23 @@ namespace Unity.Netcode
         }
 
         /// <summary>
+        /// Sends a named message to all clients
+        /// </summary>
+        /// <param name="messageStream">The message stream containing the data</param>
+        /// <param name="networkDelivery">The delivery type (QoS) to send data with</param>
+        public void SendNamedMessageToAll(string messageName, FastBufferWriter messageStream, NetworkDelivery networkDelivery = NetworkDelivery.ReliableSequenced)
+        {
+            SendNamedMessage(messageName, m_NetworkManager.ConnectedClientsIds, messageStream, networkDelivery);
+        }
+
+        /// <summary>
         /// Sends a named message
         /// </summary>
         /// <param name="messageName">The message name to send</param>
         /// <param name="clientId">The client to send the message to</param>
         /// <param name="messageStream">The message stream containing the data</param>
         /// <param name="networkDelivery">The delivery type (QoS) to send data with</param>
-        public void SendNamedMessage(string messageName, ulong clientId, Stream messageStream, NetworkDelivery networkDelivery = NetworkDelivery.ReliableSequenced)
+        public void SendNamedMessage(string messageName, ulong clientId, FastBufferWriter messageStream, NetworkDelivery networkDelivery = NetworkDelivery.ReliableSequenced)
         {
             ulong hash = 0;
             switch (m_NetworkManager.NetworkConfig.RpcHashSize)
@@ -183,20 +220,16 @@ namespace Unity.Netcode
                     break;
             }
 
-            var context = m_NetworkManager.MessageQueueContainer.EnterInternalCommandContext(MessageQueueContainer.MessageType.NamedMessage, networkDelivery, new[] { clientId }, NetworkUpdateLoop.UpdateStage);
-            if (context != null)
+            var message = new NamedMessage
             {
-                using var nonNullContext = (InternalCommandContext)context;
-                var bufferSizeCapture = new CommandContextSizeCapture(nonNullContext);
-                bufferSizeCapture.StartMeasureSegment();
+                Hash = hash,
+                SendData = messageStream
+            };
+            var size = m_NetworkManager.SendMessage(ref message, networkDelivery, clientId);
 
-                nonNullContext.NetworkWriter.WriteUInt64Packed(hash);
-
-                messageStream.Position = 0;
-                messageStream.CopyTo(nonNullContext.NetworkWriter.GetStream());
-
-                var size = bufferSizeCapture.StopMeasureSegment();
-
+            // Size is zero if we were only sending the message to ourself in which case it isn't sent.
+            if (size != 0)
+            {
                 m_NetworkManager.NetworkMetrics.TrackNamedMessageSent(clientId, messageName, size);
             }
         }
@@ -208,11 +241,16 @@ namespace Unity.Netcode
         /// <param name="clientIds">The clients to send to, sends to everyone if null</param>
         /// <param name="messageStream">The message stream containing the data</param>
         /// <param name="networkDelivery">The delivery type (QoS) to send data with</param>
-        public void SendNamedMessage(string messageName, List<ulong> clientIds, Stream messageStream, NetworkDelivery networkDelivery = NetworkDelivery.ReliableSequenced)
+        public void SendNamedMessage(string messageName, IReadOnlyList<ulong> clientIds, FastBufferWriter messageStream, NetworkDelivery networkDelivery = NetworkDelivery.ReliableSequenced)
         {
             if (!m_NetworkManager.IsServer)
             {
                 throw new InvalidOperationException("Can not send unnamed messages to multiple users as a client");
+            }
+
+            if (clientIds == null)
+            {
+                throw new ArgumentNullException("You must pass in a valid clientId List");
             }
 
             ulong hash = 0;
@@ -225,22 +263,16 @@ namespace Unity.Netcode
                     hash = XXHash.Hash64(messageName);
                     break;
             }
-
-            var context = m_NetworkManager.MessageQueueContainer.EnterInternalCommandContext(
-                MessageQueueContainer.MessageType.NamedMessage, networkDelivery,
-                clientIds.ToArray(), NetworkUpdateLoop.UpdateStage);
-            if (context != null)
+            var message = new NamedMessage
             {
-                using var nonNullContext = (InternalCommandContext)context;
-                var bufferSizeCapture = new CommandContextSizeCapture(nonNullContext);
-                bufferSizeCapture.StartMeasureSegment();
+                Hash = hash,
+                SendData = messageStream
+            };
+            var size = m_NetworkManager.SendMessage(ref message, networkDelivery, clientIds);
 
-                nonNullContext.NetworkWriter.WriteUInt64Packed(hash);
-
-                messageStream.Position = 0;
-                messageStream.CopyTo(nonNullContext.NetworkWriter.GetStream());
-
-                var size = bufferSizeCapture.StopMeasureSegment();
+            // Size is zero if we were only sending the message to ourself in which case it isn't sent.
+            if (size != 0)
+            {
                 m_NetworkManager.NetworkMetrics.TrackNamedMessageSent(clientIds, messageName, size);
             }
         }

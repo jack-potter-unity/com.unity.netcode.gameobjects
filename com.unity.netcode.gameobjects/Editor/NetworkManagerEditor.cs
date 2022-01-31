@@ -10,8 +10,11 @@ namespace Unity.Netcode.Editor
     [CanEditMultipleObjects]
     public class NetworkManagerEditor : UnityEditor.Editor
     {
+        internal const string InstallMultiplayerToolsTipDismissedPlayerPrefKey = "Netcode_Tip_InstallMPTools_Dismissed";
+        private static GUIStyle s_CenteredWordWrappedLabelStyle;
+        private static GUIStyle s_HelpBoxStyle;
+
         // Properties
-        private SerializedProperty m_DontDestroyOnLoadProperty;
         private SerializedProperty m_RunInBackgroundProperty;
         private SerializedProperty m_LogLevelProperty;
 
@@ -26,7 +29,6 @@ namespace Unity.Netcode.Editor
         private SerializedProperty m_MaxObjectUpdatesPerTickProperty;
         private SerializedProperty m_ClientConnectionBufferTimeoutProperty;
         private SerializedProperty m_ConnectionApprovalProperty;
-        private SerializedProperty m_EnableNetworkVariableProperty;
         private SerializedProperty m_EnsureNetworkVariableLengthSafetyProperty;
         private SerializedProperty m_ForceSamePrefabsProperty;
         private SerializedProperty m_EnableSceneManagementProperty;
@@ -82,7 +84,6 @@ namespace Unity.Netcode.Editor
             m_NetworkManager = (NetworkManager)target;
 
             // Base properties
-            m_DontDestroyOnLoadProperty = serializedObject.FindProperty(nameof(NetworkManager.DontDestroy));
             m_RunInBackgroundProperty = serializedObject.FindProperty(nameof(NetworkManager.RunInBackground));
             m_LogLevelProperty = serializedObject.FindProperty(nameof(NetworkManager.LogLevel));
             m_NetworkConfigProperty = serializedObject.FindProperty(nameof(NetworkManager.NetworkConfig));
@@ -94,7 +95,6 @@ namespace Unity.Netcode.Editor
             m_TickRateProperty = m_NetworkConfigProperty.FindPropertyRelative("TickRate");
             m_ClientConnectionBufferTimeoutProperty = m_NetworkConfigProperty.FindPropertyRelative("ClientConnectionBufferTimeout");
             m_ConnectionApprovalProperty = m_NetworkConfigProperty.FindPropertyRelative("ConnectionApproval");
-            m_EnableNetworkVariableProperty = m_NetworkConfigProperty.FindPropertyRelative("EnableNetworkVariable");
             m_EnsureNetworkVariableLengthSafetyProperty = m_NetworkConfigProperty.FindPropertyRelative("EnsureNetworkVariableLengthSafety");
             m_ForceSamePrefabsProperty = m_NetworkConfigProperty.FindPropertyRelative("ForceSamePrefabs");
             m_EnableSceneManagementProperty = m_NetworkConfigProperty.FindPropertyRelative("EnableSceneManagement");
@@ -110,7 +110,6 @@ namespace Unity.Netcode.Editor
         private void CheckNullProperties()
         {
             // Base properties
-            m_DontDestroyOnLoadProperty = serializedObject.FindProperty(nameof(NetworkManager.DontDestroy));
             m_RunInBackgroundProperty = serializedObject.FindProperty(nameof(NetworkManager.RunInBackground));
             m_LogLevelProperty = serializedObject.FindProperty(nameof(NetworkManager.LogLevel));
             m_NetworkConfigProperty = serializedObject.FindProperty(nameof(NetworkManager.NetworkConfig));
@@ -122,7 +121,6 @@ namespace Unity.Netcode.Editor
             m_TickRateProperty = m_NetworkConfigProperty.FindPropertyRelative("TickRate");
             m_ClientConnectionBufferTimeoutProperty = m_NetworkConfigProperty.FindPropertyRelative("ClientConnectionBufferTimeout");
             m_ConnectionApprovalProperty = m_NetworkConfigProperty.FindPropertyRelative("ConnectionApproval");
-            m_EnableNetworkVariableProperty = m_NetworkConfigProperty.FindPropertyRelative("EnableNetworkVariable");
             m_EnsureNetworkVariableLengthSafetyProperty = m_NetworkConfigProperty.FindPropertyRelative("EnsureNetworkVariableLengthSafety");
             m_ForceSamePrefabsProperty = m_NetworkConfigProperty.FindPropertyRelative("ForceSamePrefabs");
             m_EnableSceneManagementProperty = m_NetworkConfigProperty.FindPropertyRelative("EnableSceneManagement");
@@ -203,6 +201,10 @@ namespace Unity.Netcode.Editor
             Initialize();
             CheckNullProperties();
 
+#if !MULTIPLAYER_TOOLS
+            DrawInstallMultiplayerToolsTip();
+#endif
+
             {
                 var iterator = serializedObject.GetIterator();
 
@@ -218,7 +220,6 @@ namespace Unity.Netcode.Editor
             if (!m_NetworkManager.IsServer && !m_NetworkManager.IsClient)
             {
                 serializedObject.Update();
-                EditorGUILayout.PropertyField(m_DontDestroyOnLoadProperty);
                 EditorGUILayout.PropertyField(m_RunInBackgroundProperty);
                 EditorGUILayout.PropertyField(m_LogLevelProperty);
                 EditorGUILayout.Space();
@@ -260,12 +261,8 @@ namespace Unity.Netcode.Editor
                 EditorGUILayout.PropertyField(m_TickRateProperty);
 
                 EditorGUILayout.LabelField("Performance", EditorStyles.boldLabel);
-                EditorGUILayout.PropertyField(m_EnableNetworkVariableProperty);
 
-                using (new EditorGUI.DisabledScope(!m_NetworkManager.NetworkConfig.EnableNetworkVariable))
-                {
-                    EditorGUILayout.PropertyField(m_EnsureNetworkVariableLengthSafetyProperty);
-                }
+                EditorGUILayout.PropertyField(m_EnsureNetworkVariableLengthSafetyProperty);
 
                 EditorGUILayout.LabelField("Connection", EditorStyles.boldLabel);
                 EditorGUILayout.PropertyField(m_ConnectionApprovalProperty);
@@ -355,6 +352,73 @@ namespace Unity.Netcode.Editor
                     m_NetworkManager.Shutdown();
                 }
             }
+        }
+
+        private static void DrawInstallMultiplayerToolsTip()
+        {
+            const string getToolsText = "Access additional tools for multiplayer development by installing the Multiplayer Tools package in the Package Manager.";
+            const string openDocsButtonText = "Open Docs";
+            const string dismissButtonText = "Dismiss";
+            const string targetUrl = "https://docs-multiplayer.unity3d.com/docs/tools/install-tools";
+            const string infoIconName = "console.infoicon";
+
+            if (PlayerPrefs.GetInt(InstallMultiplayerToolsTipDismissedPlayerPrefKey, 0) != 0)
+            {
+                return;
+            }
+
+            if (s_CenteredWordWrappedLabelStyle == null)
+            {
+                s_CenteredWordWrappedLabelStyle = new GUIStyle(GUI.skin.label);
+                s_CenteredWordWrappedLabelStyle.wordWrap = true;
+                s_CenteredWordWrappedLabelStyle.alignment = TextAnchor.MiddleLeft;
+            }
+
+            if (s_HelpBoxStyle == null)
+            {
+                s_HelpBoxStyle = new GUIStyle(EditorStyles.helpBox);
+                s_HelpBoxStyle.padding = new RectOffset(10, 10, 10, 10);
+            }
+
+            var openDocsButtonStyle = GUI.skin.button;
+            var dismissButtonStyle = EditorStyles.linkLabel;
+
+            GUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            GUILayout.BeginHorizontal(s_HelpBoxStyle, GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(false), GUILayout.MaxWidth(800));
+            {
+                GUILayout.Label(new GUIContent(EditorGUIUtility.IconContent(infoIconName)), GUILayout.ExpandWidth(false), GUILayout.ExpandHeight(true));
+                GUILayout.Space(4);
+                GUILayout.Label(getToolsText, s_CenteredWordWrappedLabelStyle, GUILayout.ExpandHeight(true));
+
+                GUILayout.Space(4);
+
+                GUILayout.BeginVertical();
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button(openDocsButtonText, openDocsButtonStyle, GUILayout.Width(90), GUILayout.Height(30)))
+                {
+                    Application.OpenURL(targetUrl);
+                }
+                GUILayout.FlexibleSpace();
+                GUILayout.EndVertical();
+
+                GUILayout.Space(4);
+
+                GUILayout.BeginVertical();
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button(dismissButtonText, dismissButtonStyle, GUILayout.ExpandWidth(false)))
+                {
+                    PlayerPrefs.SetInt(InstallMultiplayerToolsTipDismissedPlayerPrefKey, 1);
+                }
+                EditorGUIUtility.AddCursorRect(GUILayoutUtility.GetLastRect(), MouseCursor.Link);
+                GUILayout.FlexibleSpace();
+                GUILayout.EndVertical();
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(10);
         }
     }
 }

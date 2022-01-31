@@ -13,7 +13,7 @@ namespace Unity.Netcode
     {
         private double m_TimeSec;
 
-        private int m_TickRate;
+        private uint m_TickRate;
         private double m_TickInterval;
 
         private int m_CachedTick;
@@ -40,7 +40,8 @@ namespace Unity.Netcode
         public double FixedTime => m_CachedTick * m_TickInterval;
 
         /// <summary>
-        /// Gets the fixed delta time. This value is based on the <see cref="TickRate"/> and stays constant. Similar to <see cref="Time.fixedDeltaTime"/> There is no equivalent to <see cref="Time.deltaTime"/>
+        /// Gets the fixed delta time. This value is based on the <see cref="TickRate"/> and stays constant.
+        /// Similar to <see cref="Time.fixedDeltaTime"/> There is no equivalent to <see cref="Time.deltaTime"/>
         /// </summary>
         public float FixedDeltaTime => (float)m_TickInterval;
 
@@ -51,14 +52,15 @@ namespace Unity.Netcode
 
         /// <summary>
         /// Gets the tickrate of the system of this <see cref="NetworkTime"/>.
+        /// Ticks per second.
         /// </summary>
-        public int TickRate => m_TickRate;
+        public uint TickRate => m_TickRate;
 
         /// <summary>
         /// Creates a new instance of the <see cref="NetworkTime"/> struct.
         /// </summary>
         /// <param name="tickRate">The tickrate.</param>
-        public NetworkTime(int tickRate)
+        public NetworkTime(uint tickRate)
         {
             Assert.IsTrue(tickRate > 0, "Tickrate must be a positive value.");
 
@@ -75,7 +77,7 @@ namespace Unity.Netcode
         /// <param name="tickRate">The tickrate.</param>
         /// <param name="tick">The time will be created with a value where this many tick have already passed.</param>
         /// <param name="tickOffset">Can be used to create a <see cref="NetworkTime"/> with a non fixed time value by adding an offset to the given tick value.</param>
-        public NetworkTime(int tickRate, int tick, double tickOffset = 0d)
+        public NetworkTime(uint tickRate, int tick, double tickOffset = 0d)
             : this(tickRate)
         {
             Assert.IsTrue(tickOffset < 1d / tickRate);
@@ -87,7 +89,7 @@ namespace Unity.Netcode
         /// </summary>
         /// <param name="tickRate">The tickrate.</param>
         /// <param name="timeSec">The time value as a float.</param>
-        public NetworkTime(int tickRate, double timeSec)
+        public NetworkTime(uint tickRate, double timeSec)
             : this(tickRate)
         {
             this += timeSec;
@@ -103,10 +105,20 @@ namespace Unity.Netcode
             return new NetworkTime(m_TickRate, m_CachedTick);
         }
 
+        public NetworkTime TimeTicksAgo(int ticks)
+        {
+            return this - new NetworkTime(TickRate, ticks);
+        }
+
         private void UpdateCache()
         {
             double d = m_TimeSec / m_TickInterval;
             m_CachedTick = (int)d;
+            // This check is needed due to double division imprecision of large numbers
+            if ((d - m_CachedTick) >= 0.999999999999)
+            {
+                m_CachedTick++;
+            }
             m_CachedTickOffset = ((d - Math.Truncate(d)) * m_TickInterval);
 
             // This handles negative time, decreases tick by 1 and makes offset positive.

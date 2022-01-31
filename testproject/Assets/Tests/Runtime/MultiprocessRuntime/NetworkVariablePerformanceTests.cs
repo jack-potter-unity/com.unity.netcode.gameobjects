@@ -14,6 +14,8 @@ namespace Unity.Netcode.MultiprocessRuntimeTests
 {
     public class NetworkVariablePerformanceTests : BaseMultiprocessTests
     {
+        private string[] m_Platforms;
+        protected override string[] platformList => m_Platforms;
         protected override int WorkerCount { get; } = 1;
         private const int k_MaxObjectsToSpawn = 10000;
         private List<OneNetVar> m_ServerSpawnedObjects = new List<OneNetVar>();
@@ -196,7 +198,7 @@ namespace Unity.Netcode.MultiprocessRuntimeTests
             {
                 foreach (var spawnedObject in m_ServerSpawnedObjects)
                 {
-                    spawnedObject.NetworkObject.Despawn();
+                    spawnedObject.NetworkObject.Despawn(false);
                     s_ServerObjectPool.Release(spawnedObject);
                     StopSpawnedObject(spawnedObject);
                 }
@@ -206,7 +208,8 @@ namespace Unity.Netcode.MultiprocessRuntimeTests
 
             yield return new ExecuteStepInContext(StepExecutionContext.Clients, bytes =>
             {
-                NetworkManager.Singleton.gameObject.GetComponent<CallbackComponent>().OnUpdate = null; // todo move access to callbackcomponent to singleton
+                //todo move access to callbackcomponent to singleton
+                NetworkManager.Singleton.gameObject.GetComponent<CallbackComponent>().OnUpdate = null;
 
                 void UpdateWaitForAllOneNetVarToDespawnFunc(float deltaTime)
                 {
@@ -225,13 +228,15 @@ namespace Unity.Netcode.MultiprocessRuntimeTests
                 m_ClientPrefabHandler.Dispose();
                 NetworkManager.Singleton.PrefabHandler.RemoveHandler(m_PrefabToSpawn.NetworkObject);
             });
+
+            yield return null;
         }
 
         [OneTimeTearDown]
         public override void TeardownSuite()
         {
             base.TeardownSuite();
-            if (!ShouldIgnoreTests)
+            if (!IsPerformanceTest)
             {
                 s_ServerObjectPool.Dispose();
             }

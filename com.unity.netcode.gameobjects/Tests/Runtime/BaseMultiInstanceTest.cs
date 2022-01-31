@@ -16,6 +16,8 @@ namespace Unity.Netcode.RuntimeTests
 
         protected abstract int NbClients { get; }
 
+        protected bool m_BypassStartAndWaitForClients = false;
+
         [UnitySetUp]
         public virtual IEnumerator Setup()
         {
@@ -28,9 +30,13 @@ namespace Unity.Netcode.RuntimeTests
             // Shutdown and clean up both of our NetworkManager instances
             try
             {
+                if (MultiInstanceHelpers.ClientSceneHandler != null)
+                {
+                    MultiInstanceHelpers.ClientSceneHandler.CanClientsLoad -= ClientSceneHandler_CanClientsLoad;
+                    MultiInstanceHelpers.ClientSceneHandler.CanClientsUnload -= ClientSceneHandler_CanClientsUnload;
+                }
                 MultiInstanceHelpers.Destroy();
             }
-            catch (Exception e) { throw e; }
             finally
             {
                 if (m_PlayerPrefab != null)
@@ -40,8 +46,8 @@ namespace Unity.Netcode.RuntimeTests
                 }
             }
 
-            // Make sure any NetworkObject with a GlobalObjectIdHash value of 0 is destroyed
-            // If we are tearing down, we don't want to leave NetworkObjects hanging around
+            // Make sure we clean up after ourselves and destroy any remaining NetworkObjects
+            // before we exit our test
             var networkObjects = Object.FindObjectsOfType<NetworkObject>().ToList();
             foreach (var networkObject in networkObjects)
             {
@@ -54,6 +60,44 @@ namespace Unity.Netcode.RuntimeTests
         }
 
         /// <summary>
+        /// Override this method to control when clients
+        /// fake-load a scene.
+        /// </summary>
+        protected virtual bool CanClientsLoad()
+        {
+            return true;
+        }
+
+        /// <summary>
+        /// Override this method to control when clients
+        /// fake-unload a scene.
+        /// </summary>
+        protected virtual bool CanClientsUnload()
+        {
+            return true;
+        }
+
+        /// <summary>
+        /// Registers the CanClientsLoad and CanClientsUnload events of the
+        /// ClientSceneHandler (default is IntegrationTestSceneHandler).
+        /// </summary>
+        protected void RegisterSceneManagerHandler()
+        {
+            MultiInstanceHelpers.ClientSceneHandler.CanClientsLoad += ClientSceneHandler_CanClientsLoad;
+            MultiInstanceHelpers.ClientSceneHandler.CanClientsUnload += ClientSceneHandler_CanClientsUnload;
+        }
+
+        private bool ClientSceneHandler_CanClientsUnload()
+        {
+            return CanClientsUnload();
+        }
+
+        private bool ClientSceneHandler_CanClientsLoad()
+        {
+            return CanClientsLoad();
+        }
+
+        /// <summary>
         /// Utility to spawn some clients and a server and set them up
         /// </summary>
         /// <param name="nbClients"></param>
@@ -62,15 +106,13 @@ namespace Unity.Netcode.RuntimeTests
         /// <returns></returns>
         public IEnumerator StartSomeClientsAndServerWithPlayers(bool useHost, int nbClients, Action<GameObject> updatePlayerPrefab = null, int targetFrameRate = 60)
         {
-            // Make sure any NetworkObject with a GlobalObjectIdHash value of 0 is destroyed
-            // If we are tearing down, we don't want to leave NetworkObjects hanging around
+            // Make sure there are no remaining NetworkObjects from a previous test
+            // before we start our new test
             var networkObjects = Object.FindObjectsOfType<NetworkObject>().ToList();
-            var networkObjectsList = networkObjects.Where(c => c.GlobalObjectIdHash == 0);
             foreach (var netObject in networkObjects)
             {
                 Object.DestroyImmediate(netObject);
             }
-
 
             // Create multiple NetworkManager instances
             if (!MultiInstanceHelpers.Create(nbClients, out NetworkManager server, out NetworkManager[] clients, targetFrameRate))
@@ -108,18 +150,24 @@ namespace Unity.Netcode.RuntimeTests
                 clients[i].NetworkConfig.PlayerPrefab = m_PlayerPrefab;
             }
 
-            // Start the instances
-            if (!MultiInstanceHelpers.Start(useHost, server, clients))
+            if (!m_BypassStartAndWaitForClients)
             {
-                Debug.LogError("Failed to start instances");
-                Assert.Fail("Failed to start instances");
+                // Start the instances and pass in our SceneManagerInitialization action that is invoked immediately after host-server
+                // is started and after each client is started.
+                if (!MultiInstanceHelpers.Start(useHost, server, clients))
+                {
+                    Debug.LogError("Failed to start instances");
+                    Assert.Fail("Failed to start instances");
+                }
+
+                RegisterSceneManagerHandler();
+
+                // Wait for connection on client side
+                yield return MultiInstanceHelpers.Run(MultiInstanceHelpers.WaitForClientsConnected(clients));
+
+                // Wait for connection on server side
+                yield return MultiInstanceHelpers.Run(MultiInstanceHelpers.WaitForClientsConnectedToServer(server, useHost ? nbClients + 1 : nbClients));
             }
-
-            // Wait for connection on client side
-            yield return MultiInstanceHelpers.Run(MultiInstanceHelpers.WaitForClientsConnected(clients));
-
-            // Wait for connection on server side
-            yield return MultiInstanceHelpers.Run(MultiInstanceHelpers.WaitForClientsConnectedToServer(server, useHost ? nbClients + 1 : nbClients));
         }
     }
 }

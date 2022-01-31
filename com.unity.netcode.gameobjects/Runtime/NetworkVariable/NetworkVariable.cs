@@ -1,6 +1,4 @@
-using System.Collections.Generic;
 using UnityEngine;
-using System.IO;
 using System;
 
 namespace Unity.Netcode
@@ -11,6 +9,55 @@ namespace Unity.Netcode
     [Serializable]
     public class NetworkVariable<T> : NetworkVariableBase where T : unmanaged
     {
+        // Functions that know how to serialize INetworkSerializable
+        internal static void WriteNetworkSerializable<TForMethod>(FastBufferWriter writer, ref TForMethod value)
+            where TForMethod : INetworkSerializable, new()
+        {
+            writer.WriteNetworkSerializable(value);
+        }
+        internal static void ReadNetworkSerializable<TForMethod>(FastBufferReader reader, out TForMethod value)
+            where TForMethod : INetworkSerializable, new()
+        {
+            reader.ReadNetworkSerializable(out value);
+        }
+
+        // Functions that serialize other types
+        private static void WriteValue<TForMethod>(FastBufferWriter writer, ref TForMethod value) where TForMethod : unmanaged
+        {
+            writer.WriteValueSafe(value);
+        }
+
+        private static void ReadValue<TForMethod>(FastBufferReader reader, out TForMethod value)
+            where TForMethod : unmanaged
+        {
+            reader.ReadValueSafe(out value);
+        }
+
+        internal delegate void WriteDelegate<TForMethod>(FastBufferWriter writer, ref TForMethod value);
+
+        internal delegate void ReadDelegate<TForMethod>(FastBufferReader reader, out TForMethod value);
+
+        // These static delegates provide the right implementation for writing and reading a particular network variable
+        // type.
+        //
+        // For most types, these default to WriteValue() and ReadValue(), which perform simple memcpy operations.
+        //
+        // INetworkSerializableILPP will generate startup code that will set it to WriteNetworkSerializable()
+        // and ReadNetworkSerializable() for INetworkSerializable types, which will call NetworkSerialize().
+        //
+        // In the future we may be able to use this to provide packing implementations for floats and integers to
+        // optimize bandwidth usage.
+        //
+        // The reason this is done is to avoid runtime reflection and boxing in NetworkVariable - without this,
+        // NetworkVariable would need to do a `var is INetworkSerializable` check, and then cast to INetworkSerializable,
+        // *both* of which would cause a boxing allocation. Alternatively, NetworkVariable could have been split into
+        // NetworkVariable and NetworkSerializableVariable or something like that, which would have caused a poor
+        // user experience and an API that's easier to get wrong than right. This is a bit ugly on the implementation
+        // side, but it gets the best achievable user experience and performance.
+        internal static WriteDelegate<T> Write = WriteValue;
+        internal static ReadDelegate<T> Read = ReadValue;
+
+
         /// <summary>
         /// Delegate type for value changed event
         /// </summary>
@@ -84,11 +131,6 @@ namespace Unity.Netcode
 
         private protected void Set(T value)
         {
-            if (EqualityComparer<T>.Default.Equals(m_InternalValue, value))
-            {
-                return;
-            }
-
             m_IsDirty = true;
             T previousValue = m_InternalValue;
             m_InternalValue = value;
@@ -98,22 +140,22 @@ namespace Unity.Netcode
         /// <summary>
         /// Writes the variable to the writer
         /// </summary>
-        /// <param name="stream">The stream to write the value to</param>
-        public override void WriteDelta(Stream stream)
+        /// <param name="writer">The stream to write the value to</param>
+        public override void WriteDelta(FastBufferWriter writer)
         {
-            WriteField(stream);
+            WriteField(writer);
         }
+
 
         /// <summary>
         /// Reads value from the reader and applies it
         /// </summary>
-        /// <param name="stream">The stream to read the value from</param>
+        /// <param name="reader">The stream to read the value from</param>
         /// <param name="keepDirtyDelta">Whether or not the container should keep the dirty delta, or mark the delta as consumed</param>
-        public override void ReadDelta(Stream stream, bool keepDirtyDelta)
+        public override void ReadDelta(FastBufferReader reader, bool keepDirtyDelta)
         {
-            using var reader = PooledNetworkReader.Get(stream);
             T previousValue = m_InternalValue;
-            m_InternalValue = (T)reader.ReadObjectPacked(typeof(T));
+            Read(reader, out m_InternalValue);
 
             if (keepDirtyDelta)
             {
@@ -124,16 +166,18 @@ namespace Unity.Netcode
         }
 
         /// <inheritdoc />
-        public override void ReadField(Stream stream)
+        public override void ReadField(FastBufferReader reader)
         {
-            ReadDelta(stream, false);
+            T previousValue = m_InternalValue;
+            Read(reader, out m_InternalValue);
+
+            OnValueChanged?.Invoke(previousValue, m_InternalValue);
         }
 
         /// <inheritdoc />
-        public override void WriteField(Stream stream)
+        public override void WriteField(FastBufferWriter writer)
         {
-            using var writer = PooledNetworkWriter.Get(stream);
-            writer.WriteObjectPacked(m_InternalValue); //BOX
+            Write(writer, ref m_InternalValue);
         }
     }
 }

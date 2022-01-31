@@ -5,7 +5,8 @@ using System.Reflection;
 using Unity.Netcode;
 using NUnit.Framework;
 using UnityEngine;
-using Debug = UnityEngine.Debug;
+using Unity.Netcode.Transports.UNET;
+using Unity.Netcode.MultiprocessRuntimeTests;
 
 /// <summary>
 /// TestCoordinator
@@ -20,9 +21,9 @@ using Debug = UnityEngine.Debug;
 [RequireComponent(typeof(NetworkObject))]
 public class TestCoordinator : NetworkBehaviour
 {
-    public const int PerTestTimeoutSec = 5 * 60; // seconds
+    public const int PerTestTimeoutSec = 4 * 60; // seconds
 
-    public const float MaxWaitTimeoutSec = 20;
+    public const float MaxWaitTimeoutSec = 30;
     private const char k_MethodFullNameSplitChar = '@';
 
     private bool m_ShouldShutdown;
@@ -36,12 +37,15 @@ public class TestCoordinator : NetworkBehaviour
 
     public static List<ulong> AllClientIdsWithResults => Instance.m_TestResultsLocal.Keys.ToList();
     public static List<ulong> AllClientIdsExceptMine => NetworkManager.Singleton.ConnectedClients.Keys.ToList().FindAll(client => client != NetworkManager.Singleton.LocalClientId);
+    private string m_ConnectAddress = "127.0.0.1";
+    private string m_Port = "3076";
 
     private void Awake()
     {
+        MultiprocessLogger.Log("Awake");
         if (Instance != null)
         {
-            Debug.LogError("Multiple test coordinator, destroying this instance");
+            MultiprocessLogger.LogError("Multiple test coordinator, destroying this instance");
             Destroy(gameObject);
             return;
         }
@@ -51,16 +55,62 @@ public class TestCoordinator : NetworkBehaviour
 
     public void Start()
     {
+        MultiprocessLogger.Log("Start");
         bool isClient = Environment.GetCommandLineArgs().Any(value => value == MultiprocessOrchestration.IsWorkerArg);
-        if (isClient)
+        string[] args = Environment.GetCommandLineArgs();
+        for (int i = 0; i < args.Length; ++i)
         {
-            Debug.Log("starting netcode client");
-            NetworkManager.Singleton.StartClient();
+            string arg = args[i];
+            if (arg.Equals("-ip"))
+            {
+                m_ConnectAddress = args[i + 1];
+                MultiprocessLogger.Log($"command line ip was {m_ConnectAddress}");
+
+            }
+
+            if (arg.Equals("-p"))
+            {
+                m_Port = args[i + 1];
+                MultiprocessLogger.Log($"command line port was {m_Port}");
+            }
+        }
+        MultiprocessLogger.Log($"{m_Port}");
+        var ushortport = ushort.Parse(m_Port);
+        var transport = NetworkManager.Singleton.NetworkConfig.NetworkTransport;
+        MultiprocessLogger.Log($"Transport is {transport.ToString()}");
+        MultiprocessLogger.Log($"Setting ConnectPort and ServerListenPort {ushortport}, IsClient: {IsClient}, Address {m_ConnectAddress}");
+        switch (transport)
+        {
+            case UNetTransport unetTransport:
+                unetTransport.ConnectPort = ushortport;
+                unetTransport.ServerListenPort = ushortport;
+                if (isClient)
+                {
+                    MultiprocessLogger.Log($"Setting ConnectAddress to {m_ConnectAddress}");
+                    unetTransport.ConnectAddress = m_ConnectAddress;
+                }
+                break;
+            case UnityTransport unityTransport:
+                unityTransport.ConnectionData.Port = ushortport;
+                unityTransport.ConnectionData.Address = m_ConnectAddress;
+                break;
+            default:
+                MultiprocessLogger.LogError($"The transport {transport} has no case");
+                break;
         }
 
-        NetworkManager.OnClientDisconnectCallback += OnClientDisconnectCallback;
-
+        if (isClient)
+        {
+            MultiprocessLogger.Log("starting netcode client");
+            NetworkManager.Singleton.StartClient();
+            MultiprocessLogger.Log($"started netcode client {NetworkManager.Singleton.IsConnectedClient}");
+        }
+        MultiprocessLogger.Log("Initialize All Steps");
         ExecuteStepInContext.InitializeAllSteps();
+        MultiprocessLogger.Log($"Initialize All Steps... done");
+        MultiprocessLogger.Log($"IsInvoking: {NetworkManager.Singleton.IsInvoking()}");
+        MultiprocessLogger.Log($"IsActiveAndEnabled: {NetworkManager.Singleton.isActiveAndEnabled}");
+        MultiprocessLogger.Log($"NetworkManager.NetworkConfig.NetworkTransport.name {NetworkManager.NetworkConfig.NetworkTransport.name}");
     }
 
     public void Update()
@@ -78,12 +128,16 @@ public class TestCoordinator : NetworkBehaviour
         else if (Time.time - m_TimeSinceLastConnected > MaxWaitTimeoutSec || m_ShouldShutdown)
         {
             // Make sure we don't have zombie processes
-            Debug.Log($"quitting application, shouldShutdown set to {m_ShouldShutdown}, is listening {NetworkManager.Singleton.IsListening}, is connected client {NetworkManager.Singleton.IsConnectedClient}");
+            MultiprocessLogger.Log($"quitting application, shouldShutdown set to {m_ShouldShutdown}, is listening {NetworkManager.Singleton.IsListening}, is connected client {NetworkManager.Singleton.IsConnectedClient}");
             if (!m_ShouldShutdown)
             {
                 QuitApplication();
                 Assert.Fail($"something wrong happened, was not connected for {Time.time - m_TimeSinceLastConnected} seconds");
             }
+        }
+        else
+        {
+            MultiprocessLogger.Log($"isClient {IsClient} IsConnectedClient  {NetworkManager.Singleton.IsConnectedClient}");
         }
     }
 
@@ -98,15 +152,26 @@ public class TestCoordinator : NetworkBehaviour
 
     public void TestRunTeardown()
     {
+        MultiprocessLogger.Log("TestCoordinator - TestRunTearDown");
         m_TestResultsLocal.Clear();
+        MultiprocessLogger.Log($"TestCoordinator - TestRunTearDown... Done clearing m_TestResultsLocal, count: {m_TestResultsLocal.Count}");
     }
 
-    public void OnDestroy()
+    public void OnEnable()
     {
-        if (NetworkObject != null && NetworkManager != null)
+        MultiprocessLogger.Log("OnEnable - Setting OnClientDisconnectCallback");
+        NetworkManager.OnClientDisconnectCallback += OnClientDisconnectCallback;
+    }
+
+    public void OnDisable()
+    {
+        if (IsSpawned && NetworkObject != null && NetworkObject.NetworkManager != null)
         {
+            MultiprocessLogger.Log("OnDisable - Removing OnClientDisconnectCallback");
             NetworkManager.OnClientDisconnectCallback -= OnClientDisconnectCallback;
         }
+
+        base.OnDestroy();
     }
 
     private static void OnClientDisconnectCallback(ulong clientId)
@@ -114,7 +179,7 @@ public class TestCoordinator : NetworkBehaviour
         if (clientId == NetworkManager.Singleton.ServerClientId || clientId == NetworkManager.Singleton.LocalClientId)
         {
             // if disconnect callback is for me or for server, quit, we're done here
-            Debug.Log($"received disconnect from {clientId}, quitting");
+            MultiprocessLogger.Log($"received disconnect from {clientId}, quitting");
             QuitApplication();
         }
     }
@@ -244,17 +309,25 @@ public class TestCoordinator : NetworkBehaviour
     }
 
     [ClientRpc]
-    public void TriggerActionIdClientRpc(string actionId, byte[] args, ClientRpcParams clientRpcParams = default)
+    public void TriggerActionIdClientRpc(string actionId, byte[] args, bool ignoreException, ClientRpcParams clientRpcParams = default)
     {
-        Debug.Log($"received RPC from server, client side triggering action ID {actionId}");
+        MultiprocessLogger.Log($"received RPC from server, client side triggering action ID {actionId}");
         try
         {
             ExecuteStepInContext.AllActions[actionId].Invoke(args);
         }
         catch (Exception e)
         {
-            WriteErrorServerRpc(e.Message);
-            throw;
+            WriteErrorServerRpc(e.ToString());
+
+            if (!ignoreException)
+            {
+                throw;
+            }
+            else
+            {
+                Instance.ClientFinishedServerRpc();
+            }
         }
     }
 
@@ -282,7 +355,7 @@ public class TestCoordinator : NetworkBehaviour
         }
         catch (Exception e)
         {
-            WriteErrorServerRpc(e.Message);
+            WriteErrorServerRpc(e.ToString());
             throw;
         }
     }
@@ -294,12 +367,12 @@ public class TestCoordinator : NetworkBehaviour
         {
             NetworkManager.Singleton.Shutdown();
             m_ShouldShutdown = true; // wait until isConnectedClient is false to run Application Quit in next update
-            Debug.Log("Quitting player cleanly");
+            MultiprocessLogger.Log("Quitting player cleanly");
             Application.Quit();
         }
         catch (Exception e)
         {
-            WriteErrorServerRpc(e.Message);
+            WriteErrorServerRpc(e.ToString());
             throw;
         }
     }
@@ -314,6 +387,7 @@ public class TestCoordinator : NetworkBehaviour
     public void WriteTestResultsServerRpc(float result, ServerRpcParams receiveParams = default)
     {
         var senderId = receiveParams.Receive.SenderClientId;
+        MultiprocessLogger.Log($"Server received result [{result}] from sender [{senderId}]");
         if (!m_TestResultsLocal.ContainsKey(senderId))
         {
             m_TestResultsLocal[senderId] = new List<float>();
@@ -322,9 +396,16 @@ public class TestCoordinator : NetworkBehaviour
         m_TestResultsLocal[senderId].Add(result);
     }
 
+    /// <summary>
+    /// Use this to communicate client-side errors for server-side logging using the MultiprocessLogger.
+    /// </summary>
+    /// <remarks>
+    /// Use <see cref="NetworkLog.LogErrorServer"/> to log server-side without MultiprocessLogger formatting.
+    /// </remarks>
     [ServerRpc(RequireOwnership = false)]
     public void WriteErrorServerRpc(string errorMessage, ServerRpcParams receiveParams = default)
     {
-        Debug.LogError($"Got Exception client side {errorMessage}, from client {receiveParams.Receive.SenderClientId}");
+        MultiprocessLogger.LogError($"[Netcode-Server Sender={receiveParams.Receive.SenderClientId}] {errorMessage}");
     }
 }
+

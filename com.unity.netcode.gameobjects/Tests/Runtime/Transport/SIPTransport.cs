@@ -112,6 +112,7 @@ namespace Unity.Netcode.RuntimeTests
         {
             s_Server = null;
             m_Peers.Remove(ServerClientId);
+            m_LocalConnection = null;
         }
 
         public override void Shutdown()
@@ -136,20 +137,20 @@ namespace Unity.Netcode.RuntimeTests
             // TODO: Cleanup
         }
 
-        public override SocketTasks StartClient()
+        public override bool StartClient()
         {
             if (s_Server == null)
             {
                 // No server
                 Debug.LogError("No server");
-                return SocketTask.Fault.AsTasks();
+                return false;
             }
 
             if (m_LocalConnection != null)
             {
                 // Already connected
                 Debug.LogError("Already connected");
-                return SocketTask.Fault.AsTasks();
+                return false;
             }
 
             // Generate an Id for the server that represents this client
@@ -186,23 +187,23 @@ namespace Unity.Netcode.RuntimeTests
                 Data = new ArraySegment<byte>()
             });
 
-            return SocketTask.Done.AsTasks();
+            return true;
         }
 
-        public override SocketTasks StartServer()
+        public override bool StartServer()
         {
             if (s_Server != null)
             {
                 // Can only have one server
                 Debug.LogError("Server already started");
-                return SocketTask.Fault.AsTasks();
+                return false;
             }
 
             if (m_LocalConnection != null)
             {
                 // Already connected
                 Debug.LogError("Already connected");
-                return SocketTask.Fault.AsTasks();
+                return false;
             }
 
             // Create local connection
@@ -218,7 +219,7 @@ namespace Unity.Netcode.RuntimeTests
 
             m_Peers.Add(ServerClientId, s_Server);
 
-            return SocketTask.Done.AsTasks();
+            return true;
         }
 
         public override void Send(ulong clientId, ArraySegment<byte> payload, NetworkDelivery networkDelivery)
@@ -230,17 +231,15 @@ namespace Unity.Netcode.RuntimeTests
                 byte[] copy = new byte[payload.Count];
                 Buffer.BlockCopy(payload.Array, payload.Offset, copy, 0, payload.Count);
 
-                if (!m_Peers.ContainsKey(clientId))
+                if (m_Peers.ContainsKey(clientId))
                 {
-                    throw new KeyNotFoundException($"peer id {clientId} not in peer list");
+                    m_Peers[clientId].IncomingBuffer.Enqueue(new Event
+                    {
+                        Type = NetworkEvent.Data,
+                        ConnectionId = m_LocalConnection.ConnectionId,
+                        Data = new ArraySegment<byte>(copy)
+                    });
                 }
-
-                m_Peers[clientId].IncomingBuffer.Enqueue(new Event
-                {
-                    Type = NetworkEvent.Data,
-                    ConnectionId = m_LocalConnection.ConnectionId,
-                    Data = new ArraySegment<byte>(copy)
-                });
             }
         }
 

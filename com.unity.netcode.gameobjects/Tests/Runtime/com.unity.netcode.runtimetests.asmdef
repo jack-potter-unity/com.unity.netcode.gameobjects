@@ -8,7 +8,10 @@
         "Unity.Collections",
         "UnityEngine.TestRunner",
         "Unity.Multiplayer.MetricTypes",
-        "Unity.Multiplayer.NetStats"
+        "Unity.Multiplayer.NetStats",
+        "Unity.Netcode.Adapter.UTP",
+        "ClientNetworkTransform",
+        "Unity.PerformanceTesting"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

@@ -18,6 +18,8 @@ namespace Unity.Netcode
         /// <value><c>true</c> if is supported; otherwise, <c>false</c>.</value>
         public virtual bool IsSupported => true;
 
+        internal INetworkMetrics NetworkMetrics;
+
         /// <summary>
         /// Delegate for transport network events
         /// </summary>
@@ -62,12 +64,12 @@ namespace Unity.Netcode
         /// <summary>
         /// Connects client to the server
         /// </summary>
-        public abstract SocketTasks StartClient();
+        public abstract bool StartClient();
 
         /// <summary>
         /// Starts to listening for incoming clients
         /// </summary>
-        public abstract SocketTasks StartServer();
+        public abstract bool StartServer();
 
         /// <summary>
         /// Disconnects a client from the server

@@ -15,6 +15,7 @@ namespace TestProject.ManualTests
         public int SpawnsPerSecond;
         public int PoolSize;
         public float ObjectSpeed = 10.0f;
+        public bool DontDestroy;
 
 
         [Header("Prefab Instance Handling")]
@@ -42,14 +43,78 @@ namespace TestProject.ManualTests
         private GameObject m_ObjectToSpawn;
         private List<GameObject> m_ObjectPool;
 
+        private static GameObject s_Instance;
+
         /// <summary>
         /// Called when enabled, if already connected we register any custom prefab spawn handler here
         /// </summary>
         private void OnEnable()
         {
+            m_IsExitingScene = false;
+            if (DontDestroy)
+            {
+                if (s_Instance != null && s_Instance != this)
+                {
+                    var instancePool = s_Instance.GetComponent<NetworkPrefabPool>();
+                    instancePool.MoveBackToCurrentlyActiveScene();
+                    m_ObjectPool = new List<GameObject>(instancePool.m_ObjectPool);
+                    instancePool.m_ObjectPool.Clear();
+                    Destroy(s_Instance);
+                    s_Instance = null;
+                }
+
+                if (s_Instance == null)
+                {
+                    s_Instance = gameObject;
+                    DontDestroyOnLoad(gameObject);
+                }
+            }
+
             if (SpawnSlider != null)
             {
                 SpawnSlider.gameObject.SetActive(false);
+            }
+        }
+
+        private bool m_IsExitingScene;
+        public void OnExitingScene(bool destroyObjects)
+        {
+            m_IsExitingScene = true;
+
+            if (DontDestroy)
+            {
+                if (destroyObjects)
+                {
+                    OnDestroyObjectPool();
+                    SceneManager.MoveGameObjectToScene(gameObject, SceneManager.GetActiveScene());
+                    s_Instance = null;
+                }
+                else
+                {
+                    MovePoolObjectsToDontDestroyOnLoad();
+                }
+            }
+        }
+
+        private void MovePoolObjectsToDontDestroyOnLoad()
+        {
+            foreach (var obj in m_ObjectPool)
+            {
+                obj.GetComponent<NetworkObject>().AutoObjectParentSync = false;
+                obj.transform.parent = gameObject.transform;
+            }
+        }
+
+        private void MoveBackToCurrentlyActiveScene()
+        {
+            var activeScene = SceneManager.GetActiveScene();
+            foreach (var obj in m_ObjectPool)
+            {
+                obj.transform.parent = null;
+                obj.GetComponent<NetworkObject>().AutoObjectParentSync = true;
+                SceneManager.MoveGameObjectToScene(obj, activeScene);
+                var genericBehaviour = obj.GetComponent<GenericNetworkObjectBehaviour>();
+                genericBehaviour.Reset();
             }
         }
 
@@ -57,6 +122,10 @@ namespace TestProject.ManualTests
         private void OnApplicationQuit()
         {
             m_IsQuitting = true;
+            if (DontDestroy)
+            {
+                OnDestroyObjectPool();
+            }
         }
 
         private void OnDisable()
@@ -96,7 +165,7 @@ namespace TestProject.ManualTests
         private void DeregisterCustomPrefabHandler()
         {
             // Register the custom spawn handler?
-            if (EnableHandler && NetworkManager && NetworkManager.PrefabHandler != null)
+            if (EnableHandler && IsSpawned)
             {
                 NetworkManager.PrefabHandler.RemoveHandler(ServerObjectToPool);
                 if (IsClient && m_ObjectToSpawn != null)
@@ -110,11 +179,11 @@ namespace TestProject.ManualTests
         {
             switch (sceneEvent.SceneEventType)
             {
-                case SceneEventData.SceneEventTypes.S2C_Unload:
+                case SceneEventType.Unload:
                     {
                         if (sceneEvent.LoadSceneMode == LoadSceneMode.Single && (gameObject.scene.name == sceneEvent.SceneName))
                         {
-                            OnUnloadScene();
+                            OnDestroyObjectPool();
                         }
                         break;
                     }
@@ -122,10 +191,9 @@ namespace TestProject.ManualTests
         }
 
         /// <summary>
-        /// Detect when we are switching scenes in order
-        /// to assure we stop spawning objects
+        /// Destroys the NetworkObject pool
         /// </summary>
-        private void OnUnloadScene()
+        private void OnDestroyObjectPool()
         {
             if (NetworkObject != null && NetworkManager != null)
             {
@@ -143,7 +211,20 @@ namespace TestProject.ManualTests
                 {
                     NetworkManager.SceneManager.OnSceneEvent -= OnSceneEvent;
                 }
+
+                if (DontDestroy)
+                {
+                    PostNetworkObjectCleanup();
+                }
             }
+        }
+
+
+        private IEnumerator PostNetworkObjectCleanup()
+        {
+            yield return new WaitUntil(() => !NetworkManager.Singleton.IsListening);
+            yield return new WaitForSeconds(0.5f);
+            OnNetworkDespawn();
         }
 
 
@@ -153,6 +234,17 @@ namespace TestProject.ManualTests
             if (NetworkManager != null)
             {
                 NetworkManager.SceneManager.OnSceneEvent -= OnSceneEvent;
+            }
+
+            foreach (var obj in m_ObjectPool)
+            {
+                var networkObject = obj.GetComponent<NetworkObject>();
+                var genericBehaviour = obj.GetComponent<GenericNetworkObjectBehaviour>();
+                if (networkObject.IsSpawned)
+                {
+
+                    Debug.Log($"{networkObject.name} is still considered spawned!");
+                }
             }
         }
 
@@ -174,24 +266,29 @@ namespace TestProject.ManualTests
                             {
                                 if (networkObject.IsSpawned)
                                 {
-                                    networkObject.Despawn(true);
+                                    networkObject.Despawn();
                                 }
-                                else
+                                else if (!DontDestroy)
                                 {
                                     DestroyImmediate(obj);
                                 }
+
                             }
-                            else //Client
+                            else  //Client
                             {
-                                if (!networkObject.IsSpawned)
+                                if (!DontDestroy && !networkObject.IsSpawned)
                                 {
                                     DestroyImmediate(obj);
                                 }
+
                             }
                         }
                     }
                 }
-                m_ObjectPool.Clear();
+                if (!DontDestroy)
+                {
+                    m_ObjectPool.Clear();
+                }
             }
         }
 
@@ -205,6 +302,9 @@ namespace TestProject.ManualTests
             }
         }
 
+
+
+
         /// <summary>
         /// Override NetworkBehaviour.NetworkStart
         /// </summary>
@@ -217,7 +317,6 @@ namespace TestProject.ManualTests
                 if (isActiveAndEnabled)
                 {
                     m_DelaySpawning = Time.realtimeSinceStartup + InitialSpawnDelay;
-                    StartSpawningBoxes();
 
                     //Make sure our slider reflects the current spawn rate
                     UpdateSpawnsPerSecond();
@@ -257,7 +356,7 @@ namespace TestProject.ManualTests
                 }
             }
 
-            if (EnableHandler || IsServer)
+            if ((EnableHandler || IsServer) && m_ObjectPool == null)
             {
                 m_ObjectPool = new List<GameObject>(PoolSize);
 
@@ -281,7 +380,6 @@ namespace TestProject.ManualTests
                 {
                     if (obj != null && !obj.activeInHierarchy)
                     {
-                        obj.SetActive(true);
                         return obj;
                     }
                 }
@@ -365,7 +463,7 @@ namespace TestProject.ManualTests
             m_IsSpawningObjects = true;
 
 
-            while (m_IsSpawningObjects)
+            while (m_IsSpawningObjects && !m_IsExitingScene)
             {
                 //Start spawning if auto spawn is enabled
                 if (AutoSpawnEnable)
@@ -383,15 +481,18 @@ namespace TestProject.ManualTests
                             GameObject go = GetObject();
                             if (go != null)
                             {
+                                go.SetActive(true);
                                 go.transform.position = transform.position;
-
                                 float ang = Random.Range(0.0f, 2 * Mathf.PI);
                                 go.GetComponent<GenericNetworkObjectBehaviour>().SetDirectionAndVelocity(new Vector3(Mathf.Cos(ang), 0, Mathf.Sin(ang)), ObjectSpeed);
 
                                 var no = go.GetComponent<NetworkObject>();
                                 if (!no.IsSpawned)
                                 {
-                                    no.Spawn(true);
+                                    if (no.NetworkManager != null)
+                                    {
+                                        no.Spawn(true);
+                                    }
                                 }
                             }
                         }
@@ -412,6 +513,7 @@ namespace TestProject.ManualTests
             {
                 obj.transform.position = position;
                 obj.transform.rotation = rotation;
+                obj.SetActive(true);
                 return obj.GetComponent<NetworkObject>();
             }
             return null;

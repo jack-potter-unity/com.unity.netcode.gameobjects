@@ -10,63 +10,51 @@ namespace Unity.Netcode.EditorTests
     public class NetworkTimeTests
     {
         [Test]
-        [TestCase(0d, 0)]
-        [TestCase(5d, 0)]
-        [TestCase(-5d, 0)]
-        [TestCase(0d, -20)]
-        [TestCase(5d, int.MinValue)]
-        [TestCase(-5d, -1)]
-        public void TestFailCreateInvalidTime(double time, int tickrate)
+        [TestCase(0d, 0u)]
+        [TestCase(5d, 0u)]
+        [TestCase(-5d, 0u)]
+        public void TestFailCreateInvalidTime(double time, uint tickrate)
         {
             Assert.Throws<UnityEngine.Assertions.AssertionException>(() => new NetworkTime(tickrate, time));
         }
 
         [Test]
-        [TestCase(0d, 0f, 20)]
-        [TestCase(0d, 0f, 30)]
-        [TestCase(0d, 0f, 60)]
-
-        [TestCase(201d, 201f, 20)]
-        [TestCase(201d, 201f, 30)]
-        [TestCase(201d, 201f, 60)]
-
-        [TestCase(-4301d, -4301f, 20)]
-        [TestCase(-4301d, -4301f, 30)]
-        [TestCase(-4301d, -4301f, 60)]
-
-        [TestCase(float.MaxValue, float.MaxValue, 20)]
-        [TestCase(float.MaxValue, float.MaxValue, 30)]
-        [TestCase(float.MaxValue, float.MaxValue, 60)]
-        public void TestTimeAsFloat(double d, float f, int tickRate)
+        [TestCase(0d, 0f, 20u)]
+        [TestCase(0d, 0f, 30u)]
+        [TestCase(0d, 0f, 60u)]
+        [TestCase(201d, 201f, 20u)]
+        [TestCase(201d, 201f, 30u)]
+        [TestCase(201d, 201f, 60u)]
+        [TestCase(-4301d, -4301f, 20u)]
+        [TestCase(-4301d, -4301f, 30u)]
+        [TestCase(-4301d, -4301f, 60u)]
+        [TestCase(float.MaxValue, float.MaxValue, 20u)]
+        [TestCase(float.MaxValue, float.MaxValue, 30u)]
+        [TestCase(float.MaxValue, float.MaxValue, 60u)]
+        public void TestTimeAsFloat(double d, float f, uint tickRate)
         {
             var networkTime = new NetworkTime(tickRate, d);
             Assert.True(Mathf.Approximately(networkTime.TimeAsFloat, f));
         }
 
         [Test]
-        [TestCase(53.55d, 53.5d, 10)]
-        [TestCase(1013553.55d, 1013553.5d, 10)]
-        [TestCase(0d, 0d, 10)]
-        [TestCase(-27.41d, -27.5d, 10)]
-
-        [TestCase(53.55d, 53.54d, 50)]
-        [TestCase(1013553.55d, 1013553.54d, 50)]
-        [TestCase(0d, 0d, 50)]
-        [TestCase(-27.4133d, -27.42d, 50)]
-        public void TestToFixedTime(double time, double expectedFixedTime, int tickRate)
+        [TestCase(53.55d, 53.5d, 10u)]
+        [TestCase(1013553.55d, 1013553.5d, 10u)]
+        [TestCase(0d, 0d, 10u)]
+        [TestCase(-27.41d, -27.5d, 10u)]
+        [TestCase(53.55d, 53.54d, 50u)]
+        [TestCase(1013553.55d, 1013553.54d, 50u)]
+        [TestCase(0d, 0d, 50u)]
+        [TestCase(-27.4133d, -27.42d, 50u)]
+        public void TestToFixedTime(double time, double expectedFixedTime, uint tickRate)
         {
-#if UNITY_IOS
-            Assert.True(Mathf.Approximately((float)expectedFixedTime, (float)new NetworkTime(tickRate, time).ToFixedTime().Time));
-#else
             Assert.AreEqual(expectedFixedTime, new NetworkTime(tickRate, time).ToFixedTime().Time);
-#endif
-
         }
 
         [Test]
         [TestCase(34d, 0)]
         [TestCase(17.32d, 0.2d / 60d)]
-        [TestCase(-42.44d,  1d / 60d - 0.4d / 60d)]
+        [TestCase(-42.44d, 1d / 60d - 0.4d / 60d)]
         [TestCase(-6d, 0)]
         [TestCase(int.MaxValue / 61d, 0.00082, 10d)] // Int.Max / 61 / (1/60) to get divisor then: Int.Max - divisor * 1 / 60
         public void NetworkTimeCreate(double time, double tickOffset, double epsilon = 0.0001d)
@@ -192,7 +180,7 @@ namespace Unity.Netcode.EditorTests
             NetworkTimeAdvanceTestInternal(shortSteps, 144, 1000000f);
         }
 
-        private void NetworkTimeAdvanceTestInternal(IEnumerable<float> steps, int tickRate, float start, float start2 = 0f)
+        private void NetworkTimeAdvanceTestInternal(IEnumerable<float> steps, uint tickRate, float start, float start2 = 0f)
         {
             float maxAcceptableTotalOffset = 0.005f;
 
@@ -208,6 +196,39 @@ namespace Unity.Netcode.EditorTests
             }
 
             Assert.IsTrue(Approximately(startTime.Time, (startTime2 - dif).Time, maxAcceptableTotalOffset));
+        }
+
+        [Test]
+        public void NetworkTickAdvanceTest()
+        {
+            var shortSteps = Enumerable.Repeat(1 / 30f, 1000);
+            NetworkTickAdvanceTestInternal(shortSteps, 30, 0.0f, 0.0f);
+        }
+
+        private NetworkTickSystem m_TickSystem;
+        private NetworkTimeSystem m_TimeSystem;
+        private int m_PreviousTick;
+
+        private void NetworkTickAdvanceTestInternal(IEnumerable<float> steps, uint tickRate, float start, float start2 = 0f)
+        {
+            m_PreviousTick = 0;
+            m_TickSystem = new NetworkTickSystem(tickRate, start, start2);
+            m_TimeSystem = NetworkTimeSystem.ServerTimeSystem();
+
+            m_TickSystem.Tick += TickUpdate;
+            foreach (var step in steps)
+            {
+                m_TimeSystem.Advance(step);
+                m_TickSystem.UpdateTick(m_TimeSystem.LocalTime, m_TimeSystem.ServerTime);
+            }
+        }
+
+        private void TickUpdate()
+        {
+            // Make sure our tick is precisely 1 + m_PreviousTick
+            Assert.IsTrue(m_TickSystem.LocalTime.Tick == m_PreviousTick + 1);
+            // Assign the m_PreviousTick value for next tick check
+            m_PreviousTick = m_TickSystem.LocalTime.Tick;
         }
 
         private static bool Approximately(double a, double b, double epsilon = 0.000001d)

@@ -81,11 +81,11 @@ namespace TestProject.ManualTests
         /// <returns></returns>
         private IEnumerator SendContinualPing()
         {
-            while (m_ContinueSendingPing)
+            while (m_ContinueSendingPing && NetworkManager.IsListening)
             {
                 m_PingCounter++;
                 PingUpdateClientRpc(m_PingCounter);
-                yield return new WaitForSeconds(1);
+                yield return new WaitForSeconds(0.1f);
             }
             yield return null;
         }

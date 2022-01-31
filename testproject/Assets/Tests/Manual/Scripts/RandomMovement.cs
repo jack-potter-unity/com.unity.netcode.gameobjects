@@ -3,6 +3,7 @@ using Unity.Netcode;
 
 namespace TestProject.ManualTests
 {
+
     /// <summary>
     /// Used with GenericObjects to randomly move them around
     /// </summary>
@@ -20,6 +21,11 @@ namespace TestProject.ManualTests
                 if (NetworkObject.IsOwner)
                 {
                     ChangeDirection(true, true);
+                }
+
+                if (!IsServer)
+                {
+                    m_Rigidbody.isKinematic = true;
                 }
             }
         }
@@ -53,6 +59,7 @@ namespace TestProject.ManualTests
                 m_MoveTowardsPosition = Vector3.Lerp(m_MoveTowardsPosition, Vector3.zero, 0.01f);
             }
         }
+
 
         // We just apply our current direction with magnitude to our current position during fixed update
         private void FixedUpdate()
@@ -101,6 +108,16 @@ namespace TestProject.ManualTests
                     m_MoveTowardsPosition = m_Direction * m_MoveTowardsPosition.magnitude;
                     ChangeDirectionClientRpc(m_Direction);
                 }
+            }
+        }
+
+        private static void ChangeDirectionClientRpcInHandler(NetworkBehaviour target, FastBufferReader reader)
+        {
+            NetworkManager networkManager = target.NetworkManager;
+            if (networkManager != null && networkManager.IsListening)
+            {
+                reader.ReadValueSafe(out Vector3 value);
+                ((RandomMovement)target).ChangeDirectionClientRpc(value);
             }
         }
 

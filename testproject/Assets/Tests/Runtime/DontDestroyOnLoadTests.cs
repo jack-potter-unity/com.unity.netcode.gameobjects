@@ -59,6 +59,8 @@ namespace TestProject.RuntimeTests
         [UnityTearDown]
         public IEnumerator Teardown()
         {
+            MultiInstanceHelpers.CleanUpHandlers();
+
             m_ServerNetworkManager.Shutdown();
             foreach (var networkManager in m_ClientNetworkManagers)
             {
@@ -85,12 +87,11 @@ namespace TestProject.RuntimeTests
             yield return null;
         }
 
-
         [UnityTest]
-        public IEnumerator ValidateNetworkObjectSynchronization([Values(true, false)] bool enableNetworkManagerDontDestroy)
+        public IEnumerator ValidateNetworkObjectSynchronization()
         {
-            m_ServerNetworkManager.DontDestroy = enableNetworkManagerDontDestroy;
             m_ServerNetworkManager.StartHost();
+            MultiInstanceHelpers.RegisterHandlers(m_ServerNetworkManager);
             var objectInstance = Object.Instantiate(m_DontDestroyOnLoadObject);
             var instanceNetworkObject = objectInstance.GetComponent<NetworkObject>();
             instanceNetworkObject.NetworkManagerOwner = m_ServerNetworkManager;
@@ -104,8 +105,8 @@ namespace TestProject.RuntimeTests
 
             foreach (var networkManager in m_ClientNetworkManagers)
             {
-                networkManager.DontDestroy = enableNetworkManagerDontDestroy;
                 networkManager.StartClient();
+                MultiInstanceHelpers.RegisterHandlers(networkManager);
             }
 
             yield return MultiInstanceHelpers.Run(MultiInstanceHelpers.WaitForClientsConnected(m_ClientNetworkManagers));
@@ -121,8 +122,8 @@ namespace TestProject.RuntimeTests
                     {
                         Assert.IsTrue(spawnedObject.gameObject.scene.name == "DontDestroyOnLoad");
                         var objectToNotDestroyBehaviour = spawnedObject.gameObject.GetComponent<ObjectToNotDestroyBehaviour>();
-                        Assert.IsTrue(objectToNotDestroyBehaviour.CurrentPing > 0);
-                        Assert.IsTrue(objectToNotDestroyBehaviour.CurrentPing == serverobjectToNotDestroyBehaviour.CurrentPing);
+                        Assert.Greater(objectToNotDestroyBehaviour.CurrentPing, 0);
+                        Assert.AreEqual(serverobjectToNotDestroyBehaviour.CurrentPing, objectToNotDestroyBehaviour.CurrentPing);
                     }
                 }
             }

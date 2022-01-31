@@ -26,7 +26,7 @@ namespace Unity.Netcode.Editor.CodeGen
             m_Diagnostics.Clear();
 
             // read
-            var assemblyDefinition = CodeGenHelpers.AssemblyDefinitionFor(compiledAssembly);
+            var assemblyDefinition = CodeGenHelpers.AssemblyDefinitionFor(compiledAssembly, out var unused);
             if (assemblyDefinition == null)
             {
                 m_Diagnostics.AddError($"Cannot read Netcode Runtime assembly definition: {compiledAssembly.Name}");
@@ -51,6 +51,9 @@ namespace Unity.Netcode.Editor.CodeGen
                             break;
                         case nameof(NetworkBehaviour):
                             ProcessNetworkBehaviour(typeDefinition);
+                            break;
+                        case nameof(NetworkVariableHelper):
+                            ProcessNetworkVariableHelper(typeDefinition);
                             break;
                         case nameof(__RpcParams):
                             typeDefinition.IsPublic = true;
@@ -88,9 +91,25 @@ namespace Unity.Netcode.Editor.CodeGen
                     fieldDefinition.IsPublic = true;
                 }
 
+                if (fieldDefinition.Name == nameof(NetworkManager.RpcReceiveHandler))
+                {
+                    fieldDefinition.IsPublic = true;
+                }
+
                 if (fieldDefinition.Name == nameof(NetworkManager.__rpc_name_table))
                 {
                     fieldDefinition.IsPublic = true;
+                }
+            }
+        }
+
+        private void ProcessNetworkVariableHelper(TypeDefinition typeDefinition)
+        {
+            foreach (var methodDefinition in typeDefinition.Methods)
+            {
+                if (methodDefinition.Name == nameof(NetworkVariableHelper.InitializeDelegates))
+                {
+                    methodDefinition.IsPublic = true;
                 }
             }
         }
@@ -115,14 +134,12 @@ namespace Unity.Netcode.Editor.CodeGen
 
             foreach (var methodDefinition in typeDefinition.Methods)
             {
-                switch (methodDefinition.Name)
+                if (methodDefinition.Name == nameof(NetworkBehaviour.__beginSendServerRpc) ||
+                    methodDefinition.Name == nameof(NetworkBehaviour.__endSendServerRpc) ||
+                    methodDefinition.Name == nameof(NetworkBehaviour.__beginSendClientRpc) ||
+                    methodDefinition.Name == nameof(NetworkBehaviour.__endSendClientRpc))
                 {
-                    case nameof(NetworkBehaviour.__beginSendServerRpc):
-                    case nameof(NetworkBehaviour.__endSendServerRpc):
-                    case nameof(NetworkBehaviour.__beginSendClientRpc):
-                    case nameof(NetworkBehaviour.__endSendClientRpc):
-                        methodDefinition.IsFamily = true;
-                        break;
+                    methodDefinition.IsFamily = true;
                 }
             }
         }
