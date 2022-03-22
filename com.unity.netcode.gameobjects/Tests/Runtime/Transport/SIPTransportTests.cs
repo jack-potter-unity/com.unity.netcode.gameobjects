@@ -49,5 +49,59 @@ namespace Unity.Netcode.RuntimeTests
             server.Shutdown();
             client.Shutdown();
         }
+
+        [Test]
+        public void ServerToDisconnectClient()
+        {
+            SIPTransport server = new GameObject("Server").AddComponent<SIPTransport>();
+            SIPTransport client = new GameObject("Client").AddComponent<SIPTransport>();
+
+            server.Initialize();
+            server.StartServer();
+
+            client.Initialize();
+            client.StartClient();
+
+            var serverEvent = server.PollEvent(out ulong clientId, out _, out _);
+            var clientEvent = client.PollEvent(out ulong serverId, out _, out _);
+
+            Assert.AreEqual(NetworkEvent.Connect, serverEvent);
+            Assert.AreEqual(NetworkEvent.Connect, clientEvent);
+
+            server.DisconnectRemoteClient(client.LocalClientId);
+
+            serverEvent = server.PollEvent(out clientId, out _, out _);
+            clientEvent = client.PollEvent(out serverId, out _, out _);
+
+            Assert.AreEqual(NetworkEvent.Disconnect, serverEvent);
+            Assert.AreEqual(NetworkEvent.Disconnect, clientEvent);
+        }
+
+        [Test]
+        public void ClientToDisconnectFromServer()
+        {
+            SIPTransport server = new GameObject("Server").AddComponent<SIPTransport>();
+            SIPTransport client = new GameObject("Client").AddComponent<SIPTransport>();
+
+            server.Initialize();
+            server.StartServer();
+
+            client.Initialize();
+            client.StartClient();
+
+            var serverEvent = server.PollEvent(out ulong clientId, out _, out _);
+            var clientEvent = client.PollEvent(out ulong serverId, out _, out _);
+
+            Assert.AreEqual(NetworkEvent.Connect, serverEvent);
+            Assert.AreEqual(NetworkEvent.Connect, clientEvent);
+
+            client.DisconnectLocalClient();
+
+            serverEvent = server.PollEvent(out clientId, out _, out _);
+            clientEvent = client.PollEvent(out serverId, out _, out _);
+
+            Assert.AreEqual(NetworkEvent.Disconnect, serverEvent);
+            Assert.AreEqual(NetworkEvent.Disconnect, clientEvent);
+        }
     }
 }

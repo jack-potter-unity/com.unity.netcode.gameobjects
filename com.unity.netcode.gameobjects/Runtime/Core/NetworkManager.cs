@@ -1606,6 +1606,8 @@ namespace Unity.Netcode
                 throw new NotServerException($"Only server can disconnect remote clients. Please use `{nameof(Shutdown)}()` instead.");
             }
 
+            // OnClientDisconnectCallback?.Invoke(clientId);
+
             OnClientDisconnectFromServer(clientId);
             DisconnectRemoteClient(clientId);
         }
