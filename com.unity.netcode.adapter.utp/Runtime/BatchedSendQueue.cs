@@ -2,6 +2,8 @@ using System;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Networking.Transport;
+using DataStreamReader = Unity.Networking.Transport.DataStreamReader;
+using DataStreamWriter = Unity.Networking.Transport.DataStreamWriter;
 
 namespace Unity.Netcode.UTP.Utilities
 {

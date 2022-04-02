@@ -10,6 +10,7 @@ using Unity.Networking.Transport;
 using Unity.Networking.Transport.Relay;
 using Unity.Networking.Transport.Utilities;
 using Unity.Netcode.UTP.Utilities;
+using DataStreamReader = Unity.Networking.Transport.DataStreamReader;
 
 namespace Unity.Netcode
 {
