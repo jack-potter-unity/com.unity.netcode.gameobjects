@@ -591,7 +591,7 @@ namespace Unity.Netcode.Editor.CodeGen
                             var meetsConstraints = true;
                             foreach (var constraint in method.GenericParameters[0].Constraints)
                             {
-                                var resolvedConstraint = constraint.Resolve();
+                                var resolvedConstraint = constraint.ConstraintType.Resolve();
 
                                 if ((resolvedConstraint.IsInterface && !checkType.HasInterface(resolvedConstraint.FullName)) ||
                                     (resolvedConstraint.IsClass && !checkType.Resolve().IsSubclassOf(resolvedConstraint.FullName)) ||
@@ -712,7 +712,7 @@ namespace Unity.Netcode.Editor.CodeGen
                         {
                             foreach (var constraint in method.GenericParameters[0].Constraints)
                             {
-                                var resolvedConstraint = constraint.Resolve();
+                                var resolvedConstraint = constraint.ConstraintType.Resolve();
 
                                 if ((resolvedConstraint.IsInterface && checkType.HasInterface(resolvedConstraint.FullName)) ||
                                     (resolvedConstraint.IsClass && checkType.Resolve().IsSubclassOf(resolvedConstraint.FullName)))

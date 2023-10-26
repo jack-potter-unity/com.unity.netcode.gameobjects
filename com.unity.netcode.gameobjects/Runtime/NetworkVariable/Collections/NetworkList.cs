@@ -372,14 +372,14 @@ namespace Unity.Netcode
         /// <inheritdoc />
         public bool Contains(T item)
         {
-            int index = NativeArrayExtensions.IndexOf(m_List, item);
+            int index = m_List.IndexOf(item);
             return index != -1;
         }
 
         /// <inheritdoc />
         public bool Remove(T item)
         {
-            int index = NativeArrayExtensions.IndexOf(m_List, item);
+            int index = m_List.IndexOf(item);
             if (index == -1)
             {
                 return false;
